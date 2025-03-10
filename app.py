@@ -4,6 +4,9 @@ import os
 import PyPDF2 as pdf
 from dotenv import load_dotenv
 import json
+from streamlit_lottie import st_lottie
+import requests
+import plotly.graph_objects as go
 
 # Load environment variables
 load_dotenv()
@@ -16,7 +19,7 @@ def input_pdf_text(uploaded_file):
     reader = pdf.PdfReader(uploaded_file)
     text = ""
     for page in reader.pages:
-        extracted_text = page.extract_text() or ""  # Handle None case
+        extracted_text = page.extract_text() or ""
         text += extracted_text
     return text.strip()
 
@@ -25,7 +28,7 @@ def get_gemini_response(input_text, jd):
     model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
-    Hey, act like a highly experienced ATS (Applicant Tracking System) specializing in software engineering,
+    Act as a highly experienced ATS (Applicant Tracking System) specializing in software engineering,
     data science, data analytics, and big data roles. Evaluate the resume against the provided job description.
     Consider that the job market is competitive and provide insights for improvement.
 
@@ -37,14 +40,18 @@ def get_gemini_response(input_text, jd):
     {{
       "JD Match": "X%",
       "MissingKeywords": ["keyword1", "keyword2", "..."],
-      "Profile Summary": "detailed summary here"
+      "MatchedKeywords": ["keyword1", "keyword2", "..."],
+      "ProfileSummary": "detailed summary here",
+      "StrengthAreas": ["strength1", "strength2", "..."],
+      "ImprovementAreas": ["area1", "area2", "..."],
+      "RecommendedSkills": ["skill1", "skill2", "..."]
     }}
     """
     
     response = model.generate_content(prompt)
     
     try:
-        # Clean the response text first by removing any non-JSON content
+        # Clean the response text by removing any non-JSON content
         response_text = response.text.strip()
         # If response is wrapped in markdown code blocks, remove them
         if response_text.startswith("```json") and response_text.endswith("```"):
@@ -62,121 +69,387 @@ def get_gemini_response(input_text, jd):
         else:
             return {"error": "Failed to process the response. Please try again."}
 
-# Page settings
-st.set_page_config(page_title="Smart ATS", layout="wide")
+# Function to load Lottie animations
+def load_lottieurl(url):
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    return r.json()
 
-# Initialize session state for debug mode
-if 'debug_mode' not in st.session_state:
-    st.session_state['debug_mode'] = False
+# Function to create gauge chart
+def create_gauge_chart(match_percentage):
+    percentage = int(match_percentage.strip('%'))
+    
+    # Define color based on match percentage
+    if percentage >= 70:
+        color = "green"
+    elif percentage >= 40:
+        color = "orange"
+    else:
+        color = "red"
+        
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = percentage,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': "Resume Match"},
+        gauge = {
+            'axis': {'range': [0, 100]},
+            'bar': {'color': color},
+            'steps': [
+                {'range': [0, 40], 'color': "#ffcccb"},
+                {'range': [40, 70], 'color': "#ffe4b5"},
+                {'range': [70, 100], 'color': "#c8e6c9"}
+            ],
+            'threshold': {
+                'line': {'color': "black", 'width': 4},
+                'thickness': 0.75,
+                'value': percentage
+            }
+        }
+    ))
+    
+    fig.update_layout(height=300, margin={"t":40, "b":0, "l":40, "r":40})
+    return fig
+
+# Page configuration
+st.set_page_config(
+    page_title="RecruitEase | ATS Resume Analyzer",
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # Custom CSS
 st.markdown("""
-    <style>
-    .main-title {
-        text-align: center;
-        color: #2c3e50;
-        padding: 20px;
+<style>
+    /* Main theme colors */
+    :root {
+        --main-blue: #1E88E5;
+        --light-blue: #BBD9F2;
+        --dark-blue: #0D47A1;
+        --accent-blue: #64B5F6;
     }
-    .result-card {
-        padding: 20px;
+    
+    /* Text and Headers */
+    h1, h2, h3 {
+        color: var(--dark-blue);
+        font-family: 'Helvetica Neue', sans-serif;
+    }
+    
+    /* Header styling */
+    .main-header {
+        background-color: var(--main-blue);
+        padding: 1.5rem;
         border-radius: 10px;
-        margin: 10px 0;
-        background-color: #f8f9fa;
-        border: 1px solid #dee2e6;
+        color: white !important;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
-    .match-percentage {
-        font-size: 24px;
+    
+    /* Card styling */
+    .card {
+        background-color: white;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+        margin-bottom: 20px;
+    }
+    
+    /* Input fields */
+    .stTextInput, .stTextArea {
+        border-radius: 8px;
+    }
+    
+    /* Buttons */
+    .stButton>button {
+        background-color: var(--main-blue);
+        color: white;
+        border-radius: 8px;
+        padding: 10px 20px;
         font-weight: bold;
-        color: #28a745;
+        border: none;
+        transition: all 0.3s;
+        width: 100%;
     }
-    .keywords-section {
-        margin: 20px 0;
+    
+    .stButton>button:hover {
+        background-color: var(--dark-blue);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
     }
+
+    /* Result sections */
+    .result-section {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 10px 0;
+        border-left: 5px solid var(--main-blue);
+    }
+    
+    /* Keyword pills */
     .keyword-pill {
         display: inline-block;
-        padding: 5px 10px;
+        padding: 5px 12px;
         margin: 5px;
-        background-color: #e9ecef;
-        border-radius: 15px;
+        background-color: var(--light-blue);
+        color: var(--dark-blue);
+        border-radius: 20px;
         font-size: 14px;
+        font-weight: 500;
     }
-    </style>
-    """, unsafe_allow_html=True)
+    
+    /* Matched keyword pills */
+    .matched-keyword {
+        background-color: #c8e6c9;
+        color: #2e7d32;
+    }
 
-# App title
-st.markdown("<h1 class='main-title'>Smart ATS Resume Analyzer</h1>", unsafe_allow_html=True)
+    /* Section headers */
+    .section-header {
+        font-size: 1.2rem;
+        font-weight: 600;
+        color: var(--dark-blue);
+        margin-bottom: 15px;
+        border-bottom: 2px solid var(--accent-blue);
+        padding-bottom: 8px;
+    }
+    
+    /* Icon styling */
+    .icon {
+        vertical-align: middle;
+        margin-right: 8px;
+    }
+    
+    /* Footer */
+    .footer {
+        text-align: center;
+        color: #6c757d;
+        margin-top: 2rem;
+        padding-top: 1rem;
+        border-top: 1px solid #dee2e6;
+    }
+    
+    /* File uploader */
+    .css-1qrvfrg {
+        background-color: var(--light-blue);
+        border-radius: 10px;
+        padding: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Debug mode toggle
-st.sidebar.title("Settings")
-st.session_state['debug_mode'] = st.sidebar.checkbox("Enable Debug Mode", st.session_state['debug_mode'])
+# Initialize session state
+if 'debug_mode' not in st.session_state:
+    st.session_state['debug_mode'] = False
+if 'analysis_complete' not in st.session_state:
+    st.session_state['analysis_complete'] = False
+if 'result' not in st.session_state:
+    st.session_state['result'] = None
 
-# Input fields
-col1, col2 = st.columns([2, 1])
+# Sidebar content
+with st.sidebar:
+    st.image("https://via.placeholder.com/150x80?text=RecruitEase", width=150)
+    st.markdown("## Settings & Tips")
+    
+    # Settings
+    st.markdown("### ⚙️ Settings")
+    st.session_state['debug_mode'] = st.checkbox("Enable Debug Mode", st.session_state['debug_mode'])
+    
+    # Load animation
+    resume_tips_lottie = load_lottieurl("https://lottie.host/3fe56d69-8ee6-4096-ae96-bb6cca10f369/MmHBwEPMcb.json")
+    if resume_tips_lottie:
+        st_lottie(resume_tips_lottie, height=200, key="resume_tips")
+    
+    # Resume tips
+    st.markdown("### 📝 Resume Tips")
+    st.markdown("""
+    - Tailor your resume to the job description
+    - Quantify your achievements with numbers
+    - Use action verbs (Led, Developed, Implemented)
+    - Include relevant keywords from the job posting
+    - Keep your resume concise and well-formatted
+    """)
+    
+    # About section
+    st.markdown("### ℹ️ About RecruitEase")
+    st.markdown("""
+    RecruitEase helps you optimize your resume for ATS systems using advanced AI analysis. Upload your resume, paste the job description, and get instant feedback.
+    """)
+    
+    # Footer
+    st.markdown("<div class='footer'>© 2025 RecruitEase | v1.0</div>", unsafe_allow_html=True)
+
+# Main content
+st.markdown("<h1 class='main-header'>📝 RecruitEase: ATS Resume Analyzer</h1>", unsafe_allow_html=True)
+
+# Introduction
+st.markdown("<div class='card'>", unsafe_allow_html=True)
+st.markdown("""
+### Welcome to RecruitEase! 
+Our AI-powered tool analyzes your resume against job descriptions and provides actionable feedback to increase your chances of getting past ATS systems and landing that interview.
+""")
+st.markdown("</div>", unsafe_allow_html=True)
+
+# Input section
+st.markdown("<h2>📋 Upload & Analyze</h2>", unsafe_allow_html=True)
+
+col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.markdown("### Job Description")
-    jd = st.text_area("Paste the Job Description", height=200)
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<p class='section-header'>📄 Job Description</p>", unsafe_allow_html=True)
+    jd = st.text_area("Paste the job description here", height=250, placeholder="Paste the complete job description here...")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 with col2:
-    st.markdown("### Upload Resume")
-    uploaded_file = st.file_uploader("Upload Your Resume (PDF)", type="pdf", help="Please upload a PDF")
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<p class='section-header'>📎 Resume Upload</p>", unsafe_allow_html=True)
+    uploaded_file = st.file_uploader("Upload your resume (PDF format)", type="pdf", help="Please upload a PDF file only")
+    
+    if uploaded_file:
+        st.success(f"File uploaded: {uploaded_file.name}")
+        st.info("Your resume will be analyzed against the job description. Make sure both are complete for the best results.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# Submit button
-if st.button("Analyze Resume"):
+# Analyze button
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    analyze_button = st.button("🔍 Analyze My Resume")
+
+# Processing and Results
+if analyze_button:
     if uploaded_file is not None and jd.strip():
-        with st.spinner("Analyzing your resume..."):
-            text = input_pdf_text(uploaded_file)
-            response = get_gemini_response(text, jd)
-
-            if "error" in response:
-                st.error(response["error"])
-                
-                # Show raw response in debug mode
-                if st.session_state['debug_mode'] and "raw_response" in response:
-                    st.subheader("Raw AI Response")
-                    st.code(response["raw_response"])
-                    
-                    # Provide troubleshooting help
-                    st.subheader("Troubleshooting Tips")
-                    st.markdown("""
-                    - The AI response is not in valid JSON format
-                    - Try simplifying your resume or job description
-                    - Check if your API key is valid and has necessary permissions
-                    - Try again later as the service might be experiencing high traffic
-                    """)
-            else:
-                # Display results
-                st.markdown("<div class='result-card'>", unsafe_allow_html=True)
-
-                # JD Match percentage
-                st.markdown(f"<h2 style='text-align: center;'>JD Match: <span class='match-percentage'>{response['JD Match']}</span></h2>", unsafe_allow_html=True)
-
-                # Missing Keywords
-                st.markdown("### 🎯 Missing Keywords")
-                st.markdown("<div class='keywords-section'>", unsafe_allow_html=True)
-                for keyword in response.get("MissingKeywords", []):
-                    st.markdown(f"<span class='keyword-pill'>{keyword}</span>", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
-
-                # Profile Summary
-                st.markdown("### 📋 Profile Summary")
-                st.markdown(f"<div style='padding: 20px; background-color: white; border-radius: 5px; border: 1px solid #dee2e6;'>{response['Profile Summary']}</div>", unsafe_allow_html=True)
-
-                st.markdown("</div>", unsafe_allow_html=True)
-
-                # Recommendations
-                st.markdown("### 💡 Next Steps")
-                st.info("""
-                1. Add the missing keywords to your resume where applicable.
-                2. Quantify your achievements with metrics.
-                3. Tailor your resume summary to better match the job description.
-                4. Use action verbs and industry-specific terminology.
-                """)
-
-                # In debug mode, show the raw response
-                if st.session_state['debug_mode']:
-                    st.subheader("Processed Response (JSON)")
-                    st.json(response)
-
+        with st.spinner("⏳ Analyzing your resume against the job description..."):
+            # Extract text from resume
+            resume_text = input_pdf_text(uploaded_file)
+            
+            # Get analysis from AI
+            response = get_gemini_response(resume_text, jd)
+            st.session_state['result'] = response
+            st.session_state['analysis_complete'] = True
+            
+            # Force a rerun to display the results
+            st.experimental_rerun()
     else:
-        st.warning("Please upload a resume and enter a job description before analyzing.")
+        st.error("Please upload your resume and enter a job description to proceed with the analysis.")
+
+# Display results if analysis is complete
+if st.session_state['analysis_complete'] and st.session_state['result']:
+    response = st.session_state['result']
+    
+    if "error" in response:
+        st.error(response["error"])
+        
+        # Show raw response in debug mode
+        if st.session_state['debug_mode'] and "raw_response" in response:
+            st.subheader("Raw AI Response")
+            st.code(response["raw_response"])
+            
+            # Provide troubleshooting help
+            st.subheader("Troubleshooting Tips")
+            st.markdown("""
+            - The AI response is not in valid JSON format
+            - Try simplifying your resume or job description
+            - Check if your API key is valid and has necessary permissions
+            - Try again later as the service might be experiencing high traffic
+            """)
+    else:
+        st.markdown("<h2>📊 Analysis Results</h2>", unsafe_allow_html=True)
+        
+        # Results overview
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            # Match percentage gauge chart
+            fig = create_gauge_chart(response['JD Match'])
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Quick assessment based on match percentage
+            match_percentage = int(response['JD Match'].strip('%'))
+            if match_percentage >= 70:
+                st.success("Great match! Your resume is well-aligned with this position.")
+            elif match_percentage >= 40:
+                st.warning("Moderate match. Consider enhancing your resume with the suggested improvements.")
+            else:
+                st.error("Low match. Significant improvements needed to increase your chances.")
+            st.markdown("</div>", unsafe_allow_html=True)
+        
+        with col2:
+            # Strengths and improvement areas
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.markdown("<p class='section-header'>💪 Your Strengths</p>", unsafe_allow_html=True)
+            for strength in response.get('StrengthAreas', []):
+                st.markdown(f"✅ {strength}")
+                
+            st.markdown("<p class='section-header' style='margin-top: 20px;'>🔧 Areas for Improvement</p>", unsafe_allow_html=True)
+            for area in response.get('ImprovementAreas', []):
+                st.markdown(f"⚠️ {area}")
+            st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Keywords section
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("<p class='section-header'>❌ Missing Keywords</p>", unsafe_allow_html=True)
+            if response.get('MissingKeywords'):
+                for keyword in response.get('MissingKeywords', []):
+                    st.markdown(f"<span class='keyword-pill'>🔍 {keyword}</span>", unsafe_allow_html=True)
+            else:
+                st.info("No critical missing keywords detected!")
+                
+        with col2:
+            st.markdown("<p class='section-header'>✅ Matched Keywords</p>", unsafe_allow_html=True)
+            if response.get('MatchedKeywords'):
+                for keyword in response.get('MatchedKeywords', []):
+                    st.markdown(f"<span class='keyword-pill matched-keyword'>✓ {keyword}</span>", unsafe_allow_html=True)
+            else:
+                st.info("No matched keywords found.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Profile summary
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<p class='section-header'>📋 Profile Summary</p>", unsafe_allow_html=True)
+        st.markdown(f"{response.get('ProfileSummary', 'No profile summary available.')}")
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Recommended skills
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<p class='section-header'>🚀 Recommended Skills</p>", unsafe_allow_html=True)
+        st.markdown("Consider adding these skills to your resume to increase your match rate:")
+        
+        skill_cols = st.columns(3)
+        for i, skill in enumerate(response.get('RecommendedSkills', [])):
+            with skill_cols[i % 3]:
+                st.markdown(f"<div style='background-color: #e9f5fe; padding: 10px; border-radius: 8px; margin: 5px 0;'><b>🔹 {skill}</b></div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Action plan
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<p class='section-header'>📝 Your Action Plan</p>", unsafe_allow_html=True)
+        st.markdown("""
+        1. **Add Missing Keywords**: Include the missing keywords highlighted above where relevant in your resume.
+        2. **Quantify Achievements**: Add specific metrics and numbers to demonstrate your impact.
+        3. **Optimize Format**: Ensure your resume is ATS-friendly with a clean, simple format.
+        4. **Tailor Your Summary**: Customize your professional summary to match this specific role.
+        5. **Add Recommended Skills**: Incorporate relevant skills you possess but haven't mentioned.
+        """)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # In debug mode, show the raw response
+        if st.session_state['debug_mode']:
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.markdown("<p class='section-header'>🛠️ Debug Information</p>", unsafe_allow_html=True)
+            st.json(response)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+        # Reset button
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("📝 Analyze Another Resume"):
+                st.session_state['analysis_complete'] = False
+                st.session_state['result'] = None
+                st.experimental_rerun()
